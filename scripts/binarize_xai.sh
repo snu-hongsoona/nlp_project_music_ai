@@ -22,4 +22,6 @@ i=0
 	    --workers 24
 	cp ${PREFIX}_data_raw_apex_reg_cls/$i/train.label ${PREFIX}_data_bin_apex_reg_cls/$i/label/train.label
 	cp ${PREFIX}_data_raw_apex_reg_cls/$i/test.label ${PREFIX}_data_bin_apex_reg_cls/$i/label/valid.label
+	cp ${PREFIX}_data_raw_apex_reg_cls/$i/train.id ${PREFIX}_data_bin_apex_reg_cls/$i/label/train.id
+	cp ${PREFIX}_data_raw_apex_reg_cls/$i/test.id ${PREFIX}_data_bin_apex_reg_cls/$i/label/valid.id
 echo "Done"

@@ -54,7 +54,9 @@ Projects using MusicBERT:
 - using pre-trained model
 
     ```bash
-    bash scripts/train_xai_base_small.sh # checkpoints/checkpoint_last_musicbert_base.pt, checkpoints/checkpoint_last_musicbert_base.pt
+    bash scripts/classification/pretrain.sh
+    bash scripts/classification/finetuning.sh
+    bash scripts/classification/finetuning_only.sh
     ```
 
 - If file path error, try 
@@ -63,10 +65,3 @@ Projects using MusicBERT:
 - To custom the model, check `musicbert/__init__.py`
     - Some custom arguments are provided
     - Check [fairseq](https://fairseq.readthedocs.io/en/latest/) for more information.
-
-
-- Sample script for Regression task using LSTM
-
-    ```bash
-    bash scripts/train_lstm.sh
-    ```

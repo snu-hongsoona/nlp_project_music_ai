@@ -1,0 +1,15 @@
+# Created by https://www.toptal.com/developers/gitignore/api/python
+# Edit at https://www.toptal.com/developers/gitignore?templates=python
+
+### Python ###
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+/.python-version
+/xai_data_bin_apex_reg_cls
+/xai_data_raw_apex_reg_cls
+/midi_label_map_apex_reg_cls.json
+/checkpoints
+/.vscode

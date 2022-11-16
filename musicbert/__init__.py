@@ -28,10 +28,12 @@ import logging
 import os
 import json
 from fairseq import utils
+from fairseq.models import BaseFairseqModel
 import torch
 from torch import Tensor
 from typing import Union, Callable
 from itertools import count
+from .LASCon import LASCon
 
 def exists(value):
     return value is not None
@@ -63,7 +65,6 @@ crop_length = int(os.environ['crop_length']
 print('crop_length =', crop_length)  # of compound tokens
 max_bars = 256
 max_instruments = 256
-
 
 # Thank GitHub user @neelansh for providing multi-label classification solution
 # See https://github.com/pytorch/fairseq/issues/2169
@@ -537,7 +538,7 @@ class MusicBERTModel(RobertaModel):
             help="scalar quantization noise and scalar quantization at training time",
         )
         parser.add_argument(
-            "--untie-weights-roberta",
+            "--untie-weight s-roberta",
             action="store_true",
             help="Untie weights between embeddings and classifiers in RoBERTa",
         )
@@ -866,6 +867,235 @@ class OctupleTokenDataset(PrependTokenDataset):
     def size(self, index):
         return self._sizes[index].item()
 
+
+
+class AnnotationEncoder(nn.Module):
+    def __init__(self, in_dim=26, out_dim = 768) -> None:
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(in_dim, 128), 
+            nn.GELU(), 
+            nn.Linear(128, out_dim)
+        )
+
+    def forward(self, x):
+        return self.layers(x)
+
+@register_model("xai_pretrain_model")
+class XAIPretrainModel(BaseFairseqModel):
+    def __init__(self, mainEncoder, annotationEncoder, classificationHead, projectionHead, is_fine_tuning):
+        super().__init__()
+        self.mainEncoder = mainEncoder
+        self.annotationEncoder = annotationEncoder
+        self.classificationHead = classificationHead
+        self.projectionHead = projectionHead
+        self.is_fine_tuning = is_fine_tuning
+
+    @staticmethod
+    def add_args(parser):
+        MusicBERTModel.add_args(parser)
+        parser.add_argument("--is-fine-tuning", action='store_true', default=False)
+
+    @classmethod
+    def build_model(cls, args, task):
+        mainEncoder = MusicBERTModel.build_model(args, task)
+        annotationEncoder = AnnotationEncoder()
+        classificationHead = AnnotationEncoder(in_dim=768, out_dim=14)
+        projectionHead = AnnotationEncoder(in_dim=768, out_dim=768)
+        return cls(mainEncoder, annotationEncoder, classificationHead, projectionHead, args.is_fine_tuning)
+
+    def forward(self, src_tokens, annotation=None, **kwargs):
+        if self.is_fine_tuning:
+            x, extra = self.mainEncoder(src_tokens, features_only=True)
+            x = self.classificationHead(x[:, 0])
+            return x, extra
+        else:
+            x1, extra = self.mainEncoder(src_tokens, features_only=True)
+            x1 = x1[:, 0]
+            x2 = self.annotationEncoder(annotation)
+            return x1, x2, extra 
+    
+    def upgrade_state_dict(self, state_dict):
+        if 'encoder.sentence_encoder.downsampling.0.weight' in list(state_dict.keys()):
+            ke = list(state_dict.keys())
+            for k in ke:
+                state_dict['mainEncoder.' + k] = state_dict[k]
+                del state_dict[k]
+            s = self.annotationEncoder.state_dict()
+            for k in s.keys():
+                state_dict['annotationEncoder.' + k] = s[k]
+            
+            s = self.classificationHead.state_dict()
+            for k in s.keys():
+                state_dict['classificationHead.' + k] = s[k]
+
+            s = self.projectionHead.state_dict()
+            for k in s.keys():
+                state_dict['projectionHead.' + k] = s[k]
+
+
+@register_model_architecture("xai_pretrain_model", "xai_pretrain_arch")
+def xai_base_architecutre(args):
+    base_architecture(args)
+    
+@register_task("xai_pretrain_task")
+class MusicBERTXAIPretrainTask(MusicBERTSentencePredictionMultilabelTaskXAI):
+    def load_dataset(self, split, combine=False, **kwargs):
+        split_path = os.path.join(self.args.data, 'input0', split)
+        input0 = data_utils.load_indexed_dataset(
+            split_path,
+            self.source_dictionary,
+            self.args.dataset_impl,
+            combine=combine,
+        )
+        if self.args.init_token is not None:
+            input0 = OctupleTokenDataset(input0)
+        src_dataset = input0
+        labels, label_lengths = [], []
+        with open(os.path.join(self.args.data, 'label', split+".label")) as file:
+            with open(os.path.join(self.args.data, 'label', split+".id")) as id_file:
+                for line, id_line in zip(file, id_file):
+                    line = line.strip()
+                    id_line = id_line.strip()
+                    performer = id_line.split('_')[4]
+                    performer = 13 if performer == 'Score' else int(performer)
+                    performer = int(performer)
+                    performer = torch.tensor([performer])
+                    label = json.loads(line)
+                    label = torch.tensor(label)
+                    label = torch.cat([performer, label])
+                    labels.append(label)
+                    label_lengths.append(len(label))
+                    #assert len(label) == self.args.num_reg_classes + 1, print(len(label), self.args.num_reg_classes)
+        assert len(src_dataset) == len(labels)
+        self.datasets[split] = LanguagePairDataset(
+            src=src_dataset,
+            src_sizes=src_dataset.sizes,
+            src_dict=self.label_dictionary,
+            tgt=labels,
+            tgt_sizes=torch.tensor(label_lengths),
+            tgt_dict=self.label_dictionary,
+            left_pad_source=False,
+            input_feeding=False,
+        )
+
+    def build_model(self, args):
+        from fairseq import models
+
+        model = models.build_model(args, self)
+        return model
+
+@register_criterion("xai_pretrain_loss")
+class MusicBERTM2PCriterionForXAIPretrain(MusicBERTM2PCriterionForXAI):
+    label_sim='supcon'
+    def forward(self, model, sample, reduce=True):
+        """Compute the loss for the given sample.
+
+        Returns a tuple with three elements:
+        1) the loss
+        2) the sample size, which is used as the denominator for the gradient
+        3) logging outputs to display while training
+        """
+
+        embedding1, embedding2, _ = model(
+            **sample["net_input"],
+            annotation = sample['target'][:,1:],
+            features_only=True,
+        )
+        targets = sample['target'][:, 0]
+        sample_size = targets.shape[0]
+
+        embedding1 = torch.nn.functional.normalize(embedding1)
+        embedding2 = torch.nn.functional.normalize(embedding2)
+
+        loss_fct = LASCon(label_sim=self.label_sim)
+        loss = loss_fct(embedding1, embedding2, targets, targets)
+
+        logging_output = {
+            "loss": loss.data,
+            "ntokens": sample["ntokens"],
+            "nsentences": sample_size,
+            "sample_size": sample_size,
+            "minus_loss": -(loss.data)
+        }
+
+        return loss, sample_size, logging_output
+
+@register_criterion("xai_pretrain_loss_unimodal")
+class MusicBERTM2PCriterionForXAIPretrainUnimodal(MusicBERTM2PCriterionForXAI):
+    label_sim='supcon'
+    def forward(self, model, sample, reduce=True):
+        """Compute the loss for the given sample.
+
+        Returns a tuple with three elements:
+        1) the loss
+        2) the sample size, which is used as the denominator for the gradient
+        3) logging outputs to display while training
+        """
+
+        embedding1, _, _ = model(
+            **sample["net_input"],
+            annotation = sample['target'][:,1:],
+            features_only=True,
+        )
+        targets = sample['target'][:, 0]
+        sample_size = targets.shape[0]
+        half_sample_size = sample_size//2
+
+        embedding1 = torch.nn.functional.normalize(embedding1)
+
+        loss_fct = LASCon(label_sim =self.label_sim)
+        loss = loss_fct(embedding1[0:half_sample_size], embedding1[half_sample_size:], targets[0:half_sample_size], targets[half_sample_size:])
+
+        logging_output = {
+            "loss": loss.data,
+            "ntokens": sample["ntokens"],
+            "nsentences": sample_size,
+            "sample_size": sample_size,
+            "minus_loss": -(loss.data)
+        }
+
+        return loss, sample_size, logging_output
+
+@register_criterion("xai_pretrain_loss_ntxent")
+class MusicBERTM2PCriterionForXAIPretrainNTXent(MusicBERTM2PCriterionForXAIPretrain):
+    label_sim='nt-xent'
+
+@register_criterion("xai_pretrain_loss_unimodal_ntxent")
+class MusicBERTM2PCriterionForXAIPretrainUnimodalNTXent(MusicBERTM2PCriterionForXAIPretrainUnimodal):
+    label_sim='nt-xent'
+
+@register_criterion("xai_finetuning_loss")
+class MusicBERTM2PCriterionForXAIFinetuning(SentencePredictionCriterion):
+    def forward(self, model, sample, reduce=True):
+        """Compute the loss for the given sample.
+
+        Returns a tuple with three elements:
+        1) the loss
+        2) the sample size, which is used as the denominator for the gradient
+        3) logging outputs to display while training
+        """
+
+        pred, _, = model(
+            **sample["net_input"],
+            features_only=True
+        )
+        targets = sample['target'][:, 0]
+
+        sample_size = pred.size()[0]
+        loss_fct = nn.CrossEntropyLoss(reduction='sum')
+        loss = loss_fct(pred, targets.long())
+
+        logging_output = {
+            "loss": loss.data,
+            "ntokens": sample["ntokens"],
+            "nsentences": sample_size,
+            "sample_size": sample_size,
+        }
+        preds = pred.argmax(dim=1)
+        logging_output["ncorrect"] = (preds == targets).sum()
+
+        return loss, sample_size, logging_output
 
 fairseq.tasks.sentence_prediction.PrependTokenDataset = OctupleTokenDataset
 fairseq.tasks.masked_lm.PrependTokenDataset = OctupleTokenDataset

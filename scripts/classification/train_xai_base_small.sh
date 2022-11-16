@@ -2,7 +2,7 @@
 # python ${PATH-TO-FAIRSEQ_ROOT}/fairseq_cli/train.py ${args}.
 # bash train_genre.sh topmagd 13 0 checkpoints/checkpoint_last_musicbert_base.pt
 # bash train_xai.sh xai 28 0 checkpoints/checkpoint_last_musicbert_base.pt
-export CUDA_VISIBLE_DEVICES=2
+export CUDA_VISIBLE_DEVICES=0
 
 # cd checkpoints
 # wget https://msramllasc.blob.core.windows.net/modelrelease/checkpoint_last_musicbert_small.pt

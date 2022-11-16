@@ -86,9 +86,9 @@ for i in range(n_folds):
             i, i + batch_size) if j < len(dataset)))
         source = torch.from_numpy(source)
         # if M2PF
-        #output = torch.sigmoid(roberta.predict('xai_head', source, True))
+        output = torch.sigmoid(roberta.predict('xai_head', source, True))
         # if M2PFnP:
-        output = torch.sigmoid(roberta.predict('xai_M2PFnP_res', source, True))
+        #output = torch.sigmoid(roberta.predict('xai_M2PFnP_res', source, True))
         y_true.append(target.detach().cpu().numpy())
         y_pred.append(output.detach().cpu().numpy())
         print('evaluating: {:.2f}%'.format(
