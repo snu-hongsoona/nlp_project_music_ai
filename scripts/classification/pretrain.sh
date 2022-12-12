@@ -9,8 +9,8 @@ export CUDA_VISIBLE_DEVICES=0
 # wget https://msramllasc.blob.core.windows.net/modelrelease/checkpoint_last_musicbert_base.pt
 # cd -
 
-TOTAL_NUM_UPDATES=5000
-WARMUP_UPDATES=300
+TOTAL_NUM_UPDATES=300
+WARMUP_UPDATES=100
 PEAK_LRS=(5e-5)
 TOKENS_PER_SAMPLE=8192
 MAX_POSITIONS=8192
@@ -20,8 +20,8 @@ subset=xai
 UPDATE_FREQ=$((${BATCH_SIZE} / ${MAX_SENTENCES} / 1))
 HEAD_NAME=xai_head
 
-# LOSS_TYPE=("xai_pretrain_loss" "xai_pretrain_loss_unimodal" "xai_pretrain_loss_ntxent")
-LOSS_TYPE=("xai_pretrain_loss_unimodal" "xai_pretrain_loss_ntxent")
+LOSS_TYPE=("xai_pretrain_loss" "xai_pretrain_loss_unimodal" "xai_pretrain_loss_ntxent")
+# LOSS_TYPE=("xai_pretrain_loss_unimodal" "xai_pretrain_loss_ntxent")
 
 SIZES=("base")
 for size in "${SIZES[@]}"
@@ -35,6 +35,7 @@ do
             do
             CHECKPOINT_SUFFIX=${loss}_${lr}_${size}_released
             fairseq-train xai_data_bin_apex_reg_cls/0 --user-dir musicbert \
+                --restore-file checkpoints/checkpoint_last_musicbert_base.pt \
                 --max-update $TOTAL_NUM_UPDATES \
                 --batch-size $MAX_SENTENCES --update-freq $UPDATE_FREQ \
                 --max-positions $MAX_POSITIONS \

@@ -33,6 +33,7 @@ do
             MUSICBERT_PATH=checkpoints/checkpoint_last_musicbert_base.pt
             CHECKPOINT_SUFFIX=${loss}_${lr}_${size}_finetuned
             fairseq-train xai_data_bin_apex_reg_cls/0 --user-dir musicbert \
+                --restore-file checkpoints/checkpoint_last_musicbert_base.pt \
                 --max-update $TOTAL_NUM_UPDATES \
                 --batch-size $MAX_SENTENCES --update-freq $UPDATE_FREQ \
                 --max-positions $MAX_POSITIONS \
